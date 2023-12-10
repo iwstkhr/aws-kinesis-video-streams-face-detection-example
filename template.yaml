@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: face-detector-using-kinesis-video-streams
+
+Resources:
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: face-detector-function
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - arm64
+      Timeout: 3
+      MemorySize: 128
+      Role: !GetAtt FunctionIAMRole.Arn
+      Events:
+        KinesisEvent:
+          Type: Kinesis
+          Properties:
+            Stream: !GetAtt KinesisStream.Arn
+            MaximumBatchingWindowInSeconds: 10
+            MaximumRetryAttempts: 3
+            StartingPosition: LATEST
+
+  FunctionIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: face-detector-function-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole
+      Policies:
+        - PolicyName: policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesisvideo:GetHLSStreamingSessionURL
+                  - kinesisvideo:GetDataEndpoint
+                Resource: !GetAtt KinesisVideoStream.Arn
+
+  KinesisVideoStream:
+    Type: AWS::KinesisVideo::Stream
+    Properties:
+      Name: face-detector-kinesis-video-stream
+      DataRetentionInHours: 24
+
+  RekognitionCollection:
+    Type: AWS::Rekognition::Collection
+    Properties:
+      CollectionId: FaceCollection
+
+  RekognitionStreamProcessor:
+    Type: AWS::Rekognition::StreamProcessor
+    Properties:
+      Name: face-detector-rekognition-stream-processor
+      KinesisVideoStream:
+        Arn: !GetAtt KinesisVideoStream.Arn
+      KinesisDataStream:
+        Arn: !GetAtt KinesisStream.Arn
+      RoleArn: !GetAtt RekognitionStreamProcessorIAMRole.Arn
+      FaceSearchSettings:
+        CollectionId: !Ref RekognitionCollection
+        FaceMatchThreshold: 80
+      DataSharingPreference:
+        OptIn: false
+
+  KinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: face-detector-kinesis-stream
+      StreamModeDetails:
+        StreamMode: ON_DEMAND
+
+  RekognitionStreamProcessorIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: face-detector-rekognition-stream-processor-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rekognition.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRekognitionServiceRole
+      Policies:
+        - PolicyName: policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:PutRecord
+                  - kinesis:PutRecords
+                Resource:
+                  - !GetAtt KinesisStream.Arn
